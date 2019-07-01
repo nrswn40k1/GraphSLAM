@@ -1,3 +1,4 @@
 data/*
 test.py
 .idea/
+__pycashe__/
