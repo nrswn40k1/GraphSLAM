@@ -2,6 +2,7 @@ import numpy as np
 from numpy.linalg import inv
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+from time import time
 
 INF = 1e9
 
@@ -33,17 +34,53 @@ class GraphSLAM:
         self.Qsigma2 = 0.1
         self.Q = np.diag((self.Qsigma1, self.Qsigma2))
 
+        self.fig = plt.figure(figsize=(8,4))
+        self.ax1 = self.fig.add_subplot(121)
+        self.ax2 = self.fig.add_subplot(122)
+
         self.max_iter = 3
+
+    def main(self, method=0):
+        print("GraphSLAM start!")
+        print("# of landmarks   : {}".format(self.nfeature))
+        print("# of time frames : {}".format(self.T))
+
+        methods = ["numpy package as dense", "sum of block diagonal"]
+
+        print("method for inverse calculation : {}\n".format(methods[method]))
+        print("\n")
+
+        mu, omega_til = self.predict(method)
+        n = 3 * (self.T + 1)
+        lms = mu[n:].reshape(2, len(mu[n:])//2)
+        #self.ax1.scatter(lms[0,:], lms[1,:], c="k", label="landmark")
+
+        self.ax2.pcolor(omega_til != 0, cmap=plt.cm.Blues)
+
+        print("visualizing...")
+        plt.legend()
+        plt.show()
+        print("done\n")
 
     def predict(self, method=0):
         n = 3 * (self.T + 1)
-        mu = self._initialize(self.u)
-        for _ in range(self.max_iter):
-            omega, xi = self._linearize(self.u, self.z, self.c, mu[:n])
+        mu_til = self._initialize(self.u)
+
+        print("initialize : {:.4g} [s]\n".format(self.time_initialize))
+        self.ax1.plot(mu_til[0,:], mu_til[1,:], c="r")
+
+        for i in range(self.max_iter):
+            print("=====LOOP {}=====\n".format(i))
+
+            omega, xi = self._linearize(self.u, self.z, self.c, mu_til)
             omega_til, xi_til = self._reduce(omega, xi, method)
             mu, sigma = self._solve(omega_til, xi_til, omega, xi, method)
 
-        return mu
+            mu_til = mu[:n].reshape(3, self.T+1)
+            self._time_display()
+            #self._visualize(mu[:n], i)
+
+        return mu, omega_til
 
     def _initialize(self, u):
         """
@@ -51,14 +88,25 @@ class GraphSLAM:
         :param u: 2d array which represents control amount.
         :return: 2d array which represents average pose vector.
         """
+
+        print("initializing...")
+        t1 = time()
+
         mu = np.zeros((3, self.T+1), dtype=np.float)
 
         for t in range(self.T):
             mu[:,t+1] = self._func_g(u[:,t], mu[:,t])
 
+        t2 = time()
+        self.time_initialize = t2 - t1
+        print("done\n")
+
         return mu
 
     def _linearize(self, u, z, c, mu):
+        print("linearizing...")
+        t1 = time()
+
         size = 3 * (self.T + 1) + 2 * self.nfeature
         omega = np.zeros((size, size), dtype=np.float)
         xi = np.zeros(size, dtype=np.float)
@@ -71,8 +119,8 @@ class GraphSLAM:
         update info matrix and vector at x_{t-1} and x_t
         """
         for t in range(self.T):
-            x_hat = self._func_g(mu[:,t], u[:,t])
-            G = self._jacobi_g(mu[:,t], u[:,t])
+            x_hat = self._func_g(u[:,t], mu[:,t])
+            G = self._jacobi_g(u[:,t], mu[:,t])
 
             A = np.hstack((-G, np.eye(3)))
             omega[3*t:3*t+6,3*t:3*t+6] += A.T @ inv(self.R) @ A
@@ -87,15 +135,16 @@ class GraphSLAM:
             for i in range(z[t].shape[1]):
                 j = c[t][i]
                 self.tau[j].append(t)
+                mu_j = mu[:2,t] + self._rotation_matrix(mu[2,t]) @ z[t][:,i]
 
-                z_hat = self._func_h(mu[:,t+1], mu[:,j])
-                H = self._jacobi_h(mu[:,t+1], mu[:,j])
+                z_hat = self._func_h(mu[:,t+1], mu_j)
+                H = self._jacobi_h(mu[:,t+1], mu_j)
 
                 pos_x = 3*t
                 pos_m = 3*(self.T+1) + 2*j
 
                 C = H.T @ inv(self.Q) @ H
-                D = H.T @ inv(self.Q) @ (z[t][:,i]-z_hat+H@np.hstack((mu[:,t+1], mu[:2,j])))
+                D = H.T @ inv(self.Q) @ (z[t][:,i]-z_hat+H@np.hstack((mu[:,t+1], mu_j)))
                 """
                 if not j < self.nfeature:
                     size = 3*(self.T+1) + 2*(j+1)
@@ -114,9 +163,16 @@ class GraphSLAM:
                 xi[pos_x:pos_x+3] += D[:3]
                 xi[pos_m:pos_m+2] += D[3:5]
 
+        t2 = time()
+        self.time_linearize = t2 - t1
+        print("done\n")
+
         return omega, xi
 
     def _reduce(self, omega, xi, method=0):
+        print("reducing...")
+        t1 = time()
+
         n = 3*(self.T + 1)
         omega_til = omega[:n, :n]
         xi_til = xi[:n]
@@ -125,15 +181,23 @@ class GraphSLAM:
             omega_til -= omega[:n, n:] @ inv(omega[n:, n:]) @ omega[n:, :n]
             xi_til -= omega[:n, n:] @ inv(omega[n:, n:]) @ xi[n:]
         elif method == 1:
-            for j in tqdm(range(self.nfeature)):
+            for j in range(self.nfeature):
                 jrange = [n+2*j, n+2*j+1]
                 beta = omega[:n, :][:, jrange]
                 alpha = beta @ inv(omega[jrange, :][:, jrange])
                 omega_til -= np.dot(alpha, beta.T)
                 xi_til -= alpha @ xi[jrange]
+
+        t2 = time()
+        print("done\n")
+        self.time_reduce = t2 - t1
+
         return omega_til, xi_til
 
     def _solve(self, omega_til, xi_til, omega, xi, method=0):
+        print("solving...")
+        t1 = time()
+
         n = 3 * (self.T + 1)
 
         mu = np.zeros_like(xi)
@@ -150,10 +214,32 @@ class GraphSLAM:
                 sigma_j = inv(omega[jrange, :][:, jrange])
                 tau = np.hstack((3*self.tau[j], 3*self.tau[j]+1, 3*self.tau[j]+2))
                 mu[n+2*j:n+2*j+2] = sigma_j @ (xi[jrange] + omega[jrange, :][:, tau] @ mu[tau])
+
+        t2 = time()
+        self.time_solve = t2 - t1
+        print("done\n")
+
         return mu, sigma
 
-    def _visualize(self):
+    def _visualize(self, mu, loop):
+        """
+
+        :param x: 2d array which represents predicted track
+        :return:
+        """
+
+        colorlist = ["m", "b", "g"]
+        x = [mu[i*3] for i in range(len(mu)//3)]
+        y = [mu[i*3+1] for i in range(len(mu)//3)]
+        self.ax1.plot(x, y, color=colorlist[loop], label="loop {}".format(loop))
+
         return 0
+
+    def _time_display(self):
+        print("linearize : {:.4g} [s]".format(self.time_linearize))
+        print("reduce    : {:.4g} [s]".format(self.time_reduce))
+        print("solve     : {:.4g} [s]".format(self.time_solve))
+        print("\n")
 
     # 運動学動作モデル g
     def _func_g(self, u, x_prev):
@@ -215,17 +301,12 @@ class GraphSLAM:
     def test(self):
         n = 3 * (self.T + 1)
         mu = self._initialize(self.u)
-        plt.scatter(mu[0,:], mu[1,:])
+        # plt.plot(mu[0,:], mu[1,:], color="r", label="init")
+
+        omega, xi = self._linearize(self.u, self.z, self.c, mu[:n])
+        print(omega)
+        print(xi)
+        omega_til, xi_til = self._reduce(omega, xi, method=0)
+        mu, sigma = self._solve(omega_til, xi_til, omega, xi, method=0)
+        plt.plot(mu[[3*i for i in range(self.T+1)]], mu[[3*i+1 for i in range(self.T+1)]])
         plt.show()
-        # print(mu)
-        # omega, xi = self._linearize(self.u, self.z, self.c, mu[:n])
-        # print(omega)
-        # print(xi)
-        # omega_til, xi_til = self._reduce(omega, xi, method=0)
-        # print(omega_til)
-        # print(xi_til)
-        # mu, sigma = self._solve(omega_til, xi_til, omega, xi, method=0)
-        # print(mu)
-        # print(sigma)
-        # plt.scatter(mu[[3*i for i in range(self.T+1)]], mu[[3*i+1 for i in range(self.T+1)]])
-        # plt.show()
