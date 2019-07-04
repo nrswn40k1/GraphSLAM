@@ -11,7 +11,7 @@ def read(fname):
     :return: z, c, u, nfeature
     """
     data = pd.read_table(fname, sep=" ", header=None)
-    data = data[:500]
+    # data = data[:500]
     measure = data[data[0]=="EDGE_SE2_XY"]
     control = data[data[0]=="EDGE_SE2"]
 
