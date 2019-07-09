@@ -11,7 +11,6 @@ def read(fname):
     :return: z, c, u, nfeature
     """
     data = pd.read_table(fname, sep=" ", header=None)
-    # data = data[:500]
     measure = data[data[0]=="EDGE_SE2_XY"]
     control = data[data[0]=="EDGE_SE2"]
 
@@ -32,7 +31,6 @@ def read(fname):
         if tmp <= row[2]:
             fdict[row[2]] = nfeature
             nfeature += 1
-        #print(row[2])
         c[time].append(fdict[row[2]])
         z[time] = np.hstack((z[time], np.array([[row[3]],[row[4]]])))
 

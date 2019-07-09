@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from time import time
 
-INF = 1e9
+INF = 1e12
 
 
 class GraphSLAM:
@@ -35,11 +35,11 @@ class GraphSLAM:
         self.Qsigma2 = 0.1
         self.Q = np.diag((self.Qsigma1, self.Qsigma2))
 
-        self.fig = plt.figure(figsize=(8,4))
+        self.fig = plt.figure(figsize=(11,5))
         self.ax1 = self.fig.add_subplot(121)
         self.ax2 = self.fig.add_subplot(122)
 
-        self.max_iter = 3
+        self.max_iter = 1
 
     def main(self, method=0):
         print("GraphSLAM start!")
@@ -51,10 +51,11 @@ class GraphSLAM:
         print("method for inverse calculation : {}".format(methods[method]))
         print("\n")
 
-        mu, omega_til = self.predict(method)
         n = 3 * (self.T + 1)
-        lms = mu[n:].reshape(2, len(mu[n:])//2)
-        # self.ax1.scatter(lms[0,:], lms[1,:], c="k", label="landmark")
+
+        mu, omega_til = self.predict(method)
+        lms = mu[n:].reshape(len(mu[n:])//2, 2).T
+        self.ax1.scatter(lms[0,:], lms[1,:], c="k", marker="x", label="landmark")
 
         self.ax2.pcolor(omega_til != 0, cmap=plt.cm.Blues)
         self.ax2.invert_yaxis()
@@ -63,7 +64,7 @@ class GraphSLAM:
         self.ax1.legend()
         self.ax1.set_title("predicted track by GraphSLAM")
         self.ax2.set_title("information matrix")
-        plt.show()
+        # plt.show()
         print("done\n")
 
     def predict(self, method=0):
@@ -79,13 +80,13 @@ class GraphSLAM:
         self.ax1.plot(mu_til[0,:], mu_til[1,:], c="r", label="init")
 
         for i in range(self.max_iter):
-            print("=====LOOP {}=====\n".format(i))
+            print("=====ITER {}=====\n".format(i + 1))
 
             omega, xi = self._linearize(self.u, self.z, self.c, mu_til)
             omega_til, xi_til = self._reduce(omega, xi, method)
             mu, sigma = self._solve(omega_til, xi_til, omega, xi, method)
 
-            mu_til = mu[:n].reshape(3, self.T+1)
+            mu_til = mu[:n].reshape(self.T+1, 3).T
             self._time_display()
             self._visualize(mu[:n], i)
 
@@ -152,7 +153,7 @@ class GraphSLAM:
                 pos_m = 3*(self.T+1) + 2*j
 
                 C = H.T @ inv(self.Q) @ H
-                D = H.T @ inv(self.Q) @ (z[t][:,i]-z_hat+H@np.hstack((mu[:,t+1], mu_j)))
+                D = H.T @ inv(self.Q) @ (z[t][:,i] - z_hat + H @ np.hstack((mu[:,t+1], mu_j)))
 
                 omega[pos_x:pos_x+3,pos_x:pos_x+3] += C[:3,:3]
                 omega[pos_x:pos_x+3,pos_m:pos_m+2] += C[:3,3:5]
@@ -183,7 +184,7 @@ class GraphSLAM:
                 jrange = [n+2*j, n+2*j+1]
                 beta = omega[:n, :][:, jrange]
                 alpha = beta @ inv(omega[jrange, :][:, jrange])
-                omega_til -= np.dot(alpha, beta.T)
+                omega_til -= alpha @ beta.T
                 xi_til -= alpha @ xi[jrange]
         elif method == 2:
             omega = sparse.csr_matrix(omega)
@@ -208,14 +209,14 @@ class GraphSLAM:
 
         if method == 0:
             sigma_m = inv(omega[n:, n:])
-            mu[n:] = sigma_m @ (xi[n:] + omega[n:, :n] @ xi_til)
+            mu[n:] = sigma_m @ (xi[n:] - omega[n:, :n] @ mu[:n])
         elif method == 1:
             for j in range(self.nfeature):
                 self.tau[j] = np.array(self.tau[j])
                 jrange = [n+2*j, n+2*j+1]
                 sigma_j = inv(omega[jrange, :][:, jrange])
                 tau = np.hstack((3*self.tau[j], 3*self.tau[j]+1, 3*self.tau[j]+2))
-                mu[n+2*j:n+2*j+2] = sigma_j @ (xi[jrange] + omega[jrange, :][:, tau] @ mu[tau])
+                mu[n+2*j:n+2*j+2] = sigma_j @ (xi[jrange] - omega[jrange, :][:, tau] @ mu[tau])
         elif method == 2:
             omega = sparse.csr_matrix(omega)
             sigma_m = inv(omega[n:, n:])
@@ -237,7 +238,7 @@ class GraphSLAM:
         colorlist = ["m", "b", "g"]
         x = [mu[i*3] for i in range(len(mu)//3)]
         y = [mu[i*3+1] for i in range(len(mu)//3)]
-        self.ax1.plot(x, y, color=colorlist[loop], label="loop {}".format(loop))
+        self.ax1.plot(x, y, color=colorlist[loop%3], label="iter {}".format(loop + 1))
 
         return 0
 
@@ -250,14 +251,9 @@ class GraphSLAM:
     # 運動学動作モデル g
     def _func_g(self, u, x_prev):
         x = np.zeros(3, dtype=np.float)
-        """
-        d_x = np.zeros(3)
-        d_x[0] = (- np.sin(x_prev[2]) + np.sin(x_prev[2] + u[1] / self.f)) * (u[0] / u[1])
-        d_x[1] = (np.cos(x_prev[2]) - np.cos(x_prev[2] + u[1] / self.f)) * (u[0] / u[1])
-        d_x[2] = u[1] / self.f
-        """
         x[:2] = x_prev[:2] + self._rotation_matrix(x_prev[2]) @ u[:2]
         x[2] = x_prev[2] + u[2]
+        x[2] = x[2] % (2 * np.pi)
 
         return x
 
@@ -266,26 +262,25 @@ class GraphSLAM:
 
         G = np.eye(3, dtype=np.float)
         P = np.array([[-np.sin(x[2]), -np.cos(x[2])],
-                      [np.cos(x[2]), -np.sin(x[2])]])
+                      [np.cos(x[2]),  -np.sin(x[2])]])
         G[:2,2] = P @ u[:2]
 
         return G
 
     # 計測関数 h
     def _func_h(self, x, m):
-        z = np.zeros(2, dtype=np.float)
         Rot = self._rotation_matrix(-x[2])
 
-        z[:2] = Rot @ (m[:2] - x[:2])
+        z = Rot @ (m[:2] - x[:2])
 
         return z
 
     # 関数hの[x_t, m_j]におけるヤコビ行列
     def _jacobi_h(self, x, m):
         h = np.zeros((2,5))
-        Rot = self._rotation_matrix(x[2])
-        P = np.array([[-np.sin(x[2]), -np.cos(x[2])],
-                      [np.cos(x[2]), -np.sin(x[2])]])
+        Rot = self._rotation_matrix(-x[2])
+        P = np.array([[-np.sin(x[2]),  np.cos(x[2])],
+                      [-np.cos(x[2]), -np.sin(x[2])]])
         h[:2,:2] = -1 * Rot
         h[:2,3:5] = Rot
         h[:2,2] = P @ (m[:2] - x[:2])
@@ -294,25 +289,6 @@ class GraphSLAM:
 
     def _rotation_matrix(self, theta):
         Rot = np.array([[np.cos(theta), -np.sin(theta)],
-                      [np.sin(theta), np.cos(theta)]])
+                        [np.sin(theta), np.cos(theta)]])
 
         return Rot
-
-    def test(self):
-        n = 3 * (self.T + 1)
-        mu = self._initialize(self.u)
-        self.ax1.plot(mu[0,:], mu[1,:], color="r", label="init")
-        #self.ax1.legend()
-        # plt.show()
-
-        omega, xi = self._linearize(self.u, self.z, self.c, mu[:n])
-
-        omega_til, xi_til = self._reduce(omega, xi, method=2)
-        self.ax2.pcolor(omega_til != 0, cmap=plt.cm.Blues)
-        self.ax2.invert_yaxis()
-        #plt.show()
-
-        mu, sigma = self._solve(omega_til, xi_til, omega, xi, method=2)
-        self.ax1.plot(mu[[3*i for i in range(self.T+1)]], mu[[3*i+1 for i in range(self.T+1)]])
-        plt.show()
-
