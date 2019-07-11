@@ -8,9 +8,9 @@ import DataCenter
 method = int(sys.argv[2])
 
 
-dirname = "../data/sample0"
+dirname = "../data/sample3"
 fname = os.path.join(dirname, "input.txt")
-savefile = os.path.join(dirname, "result.txt")
+savefile = os.path.join(dirname, "result.png")
 
 z, u, c, n = DataCenter.read(fname)
 
