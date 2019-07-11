@@ -35,9 +35,10 @@ class GraphSLAM:
         self.Qsigma2 = 0.1
         self.Q = np.diag((self.Qsigma1, self.Qsigma2))
 
-        self.fig = plt.figure(figsize=(11,5))
-        self.ax1 = self.fig.add_subplot(121)
-        self.ax2 = self.fig.add_subplot(122)
+        self.fig = plt.figure(figsize=(13,4))
+        self.ax1 = self.fig.add_subplot(111)
+        # self.ax2 = self.fig.add_subplot(132)
+        # self.ax3 = self.fig.add_subplot(133)
 
         self.max_iter = 1
 
@@ -55,17 +56,19 @@ class GraphSLAM:
 
         mu, omega_til = self.predict(method)
         lms = mu[n:].reshape(len(mu[n:])//2, 2).T
+
         self.ax1.scatter(lms[0,:], lms[1,:], c="k", marker="x", label="landmark")
 
-        self.ax2.pcolor(omega_til != 0, cmap=plt.cm.Blues)
-        self.ax2.invert_yaxis()
+        # self.ax3.pcolor(omega_til != 0, cmap=plt.cm.Blues)
+        # self.ax3.invert_yaxis()
 
         print("visualizing...")
         self.ax1.legend()
         self.ax1.set_title("predicted track by GraphSLAM")
-        self.ax2.set_title("information matrix")
-        # plt.show()
+        # self.ax2.set_title("information matrix")
+        # self.ax3.set_title("compressed information matrix")
         print("done\n")
+
 
     def predict(self, method=0):
         n = 3 * (self.T + 1)
@@ -89,6 +92,9 @@ class GraphSLAM:
             mu_til = mu[:n].reshape(self.T+1, 3).T
             self._time_display()
             self._visualize(mu[:n], i)
+
+        # self.ax2.pcolor(omega!=0, cmap=plt.cm.Blues)
+        # self.ax2.invert_yaxis()
 
         return mu, omega_til
 
@@ -173,8 +179,11 @@ class GraphSLAM:
         t1 = time()
 
         n = 3*(self.T + 1)
-        omega_til = omega[:n, :n]
-        xi_til = xi[:n]
+
+        omega_til = np.zeros((n,n))
+        xi_til = np.zeros(n)
+        omega_til += omega[:n, :n]
+        xi_til += xi[:n]
 
         if method == 0:
             omega_til -= omega[:n, n:] @ inv(omega[n:, n:]) @ omega[n:, :n]
@@ -182,9 +191,8 @@ class GraphSLAM:
         elif method == 1:
             for j in range(self.nfeature):
                 jrange = [n+2*j, n+2*j+1]
-                beta = omega[:n, :][:, jrange]
-                alpha = beta @ inv(omega[jrange, :][:, jrange])
-                omega_til -= alpha @ beta.T
+                alpha = omega[:n, :][:, jrange] @ inv(omega[jrange, :][:, jrange])
+                omega_til -= alpha @ omega[:n, :][:, jrange].T
                 xi_til -= alpha @ xi[jrange]
         elif method == 2:
             omega = sparse.csr_matrix(omega)
@@ -235,7 +243,7 @@ class GraphSLAM:
         :return:
         """
 
-        colorlist = ["m", "b", "g"]
+        colorlist = ["b", "m", "g"]
         x = [mu[i*3] for i in range(len(mu)//3)]
         y = [mu[i*3+1] for i in range(len(mu)//3)]
         self.ax1.plot(x, y, color=colorlist[loop%3], label="iter {}".format(loop + 1))

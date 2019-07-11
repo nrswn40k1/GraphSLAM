@@ -8,17 +8,16 @@ A = 30
 B = 20
 RANGE = 20
 
-TIMEFRAME = 100
-NFEATURE = 30
+TIMEFRAME = 1000
+NFEATURE = 100
 
 epsilon = 1e-6
 
 
 def ellipse():
-    theta = np.linspace(0, 2*np.pi, TIMEFRAME+1) + np.pi
+    theta = np.linspace(0, 2*np.pi, TIMEFRAME+1)
     x = A * np.cos(theta)
     y = B * np.sin(theta)
-    # tan = np.arctan(- x / (y + epsilon))
     tan = np.arctan2(B**2*x, -A**2*y)
     tan[0] = 0
 
@@ -48,6 +47,15 @@ def landmark():
 
 
 def main():
+
+    dirname = "../data/sample{}".format(len(os.listdir("../data/")))
+    os.mkdir(dirname)
+    inputdata = os.path.join(dirname, "input.txt")
+    truedata = os.path.join(dirname, "truedata.txt")
+    xnpy = os.path.join(dirname, "xTrue.npy")
+    lmnpy = os.path.join(dirname, "lmTrue.npy")
+    fig = os.path.join(dirname, "truedata.png")
+
     x = ellipse()
     # x = line()
     dx = np.diff(x)
@@ -59,7 +67,7 @@ def main():
     t1 = 0
     t2 = 1
 
-    with open("../data/sample7/input.txt", "w") as f_ob, open("../data/sample7/truedata.txt", "w") as f_tr:
+    with open(inputdata, "w") as f_ob, open(truedata, "w") as f_tr:
         for t in range(TIMEFRAME):
             c = 0
             edge_tr = rotation_matrix(-x[2,t]) @ dx[:2,t]
@@ -81,11 +89,11 @@ def main():
             t1 = t2
             t2 += 1 + c
 
-    np.save("../data/sample7/xTrue.npy", x)
-    np.save("../data/sample7/lmTrue.npy", lm)
+    np.save(xnpy, x)
+    np.save(lmnpy, lm)
     plt.plot(x[0,:], x[1,:])
     plt.scatter(lm[0,:], lm[1,:])
-    plt.savefig("../data/sample7/truedata.png")
+    plt.savefig(fig)
     plt.show()
 
 
