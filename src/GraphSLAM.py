@@ -1,8 +1,8 @@
 import numpy as np
 from numpy.linalg import inv
 from scipy import sparse
+from scipy.sparse.linalg import inv as inv_sparse
 import matplotlib.pyplot as plt
-from tqdm import tqdm
 from time import time
 
 INF = 1e12
@@ -13,7 +13,7 @@ class GraphSLAM:
     def __init__(self, z, u, c, nfeature):
         """
 
-        :param z: 3d list which represents measurement amount.
+        :param z: 1d list of 2d array which represents measurement amount.
         :param u: 2d array which represents control amount.
         :param c: 2d list which represents correspondence.
         :param nfeature: # of features
@@ -35,8 +35,10 @@ class GraphSLAM:
         self.Qsigma2 = 0.1
         self.Q = np.diag((self.Qsigma1, self.Qsigma2))
 
-        self.fig = plt.figure(figsize=(13,4))
+        self.fig = plt.figure(figsize=(5,5))
         self.ax1 = self.fig.add_subplot(111)
+        # self.fig = plt.figure(figsize=(13, 4))
+        # self.ax1 = self.fig.add_subplot(131)
         # self.ax2 = self.fig.add_subplot(132)
         # self.ax3 = self.fig.add_subplot(133)
 
@@ -47,7 +49,7 @@ class GraphSLAM:
         print("# of landmarks   : {}".format(self.nfeature))
         print("# of time frames : {}".format(self.T))
 
-        methods = ["numpy package as dense", "sum of block diagonal", "scipy package as sparse"]
+        methods = ["numpy package as dense", "sum of block diagonal as dense", "scipy package as sparse"]
 
         print("method for inverse calculation : {}".format(methods[method]))
         print("\n")
@@ -68,7 +70,6 @@ class GraphSLAM:
         # self.ax2.set_title("information matrix")
         # self.ax3.set_title("compressed information matrix")
         print("done\n")
-
 
     def predict(self, method=0):
         n = 3 * (self.T + 1)
@@ -100,7 +101,7 @@ class GraphSLAM:
 
     def _initialize(self, u):
         """
-        initialize the average pose vector mu.
+        Initialize the average pose vector mu.
         :param u: 2d array which represents control amount.
         :return: 2d array which represents average pose vector.
         """
@@ -120,6 +121,16 @@ class GraphSLAM:
         return mu
 
     def _linearize(self, u, z, c, mu):
+        """
+        Linearize the function g and h, and create information matrix and vector.
+
+        :param u: 2d array which represents control amount.
+        :param z: 1d list of 2d array which represents measurement amount.
+        :param c: 2d list which represents correspondence.
+        :param mu: 2d array which represents average pose vector.
+        :return: information matrix and vector
+        """
+
         print("linearizing...")
         t1 = time()
 
@@ -175,6 +186,10 @@ class GraphSLAM:
         return omega, xi
 
     def _reduce(self, omega, xi, method=0):
+        """
+        Reduce the size of information matrix and vector.
+        """
+
         print("reducing...")
         t1 = time()
 
@@ -195,9 +210,10 @@ class GraphSLAM:
                 omega_til -= alpha @ omega[:n, :][:, jrange].T
                 xi_til -= alpha @ xi[jrange]
         elif method == 2:
-            omega = sparse.csr_matrix(omega)
-            omega_til -= omega[:n, n:] @ inv(omega[n:, n:]) @ omega[n:, :n]
-            xi_til -= omega[:n, n:] @ inv(omega[n:, n:]) @ xi[n:]
+            omega_csc = sparse.csc_matrix(omega)
+            inv_omega = inv_sparse(omega_csc[n:,n:])
+            omega_til -= omega_csc[:n,n:].dot(inv_omega.dot(omega_csc[n:,:n])).toarray()
+            xi_til -= omega_csc[:n, n:].dot(inv_omega).toarray() @ xi[n:]
 
         t2 = time()
         print("done\n")
@@ -206,19 +222,24 @@ class GraphSLAM:
         return omega_til, xi_til
 
     def _solve(self, omega_til, xi_til, omega, xi, method=0):
+        """
+        Estimate the track and map.
+        """
         print("solving...")
         t1 = time()
 
         n = 3 * (self.T + 1)
 
-        mu = np.zeros_like(xi)
-        sigma = inv(omega_til)
-        mu[:n] = sigma @ xi_til
-
         if method == 0:
+            mu = np.zeros_like(xi)
+            sigma = inv(omega_til)
+            mu[:n] = sigma @ xi_til
             sigma_m = inv(omega[n:, n:])
             mu[n:] = sigma_m @ (xi[n:] - omega[n:, :n] @ mu[:n])
         elif method == 1:
+            mu = np.zeros_like(xi)
+            sigma = inv(omega_til)
+            mu[:n] = sigma @ xi_til
             for j in range(self.nfeature):
                 self.tau[j] = np.array(self.tau[j])
                 jrange = [n+2*j, n+2*j+1]
@@ -226,9 +247,13 @@ class GraphSLAM:
                 tau = np.hstack((3*self.tau[j], 3*self.tau[j]+1, 3*self.tau[j]+2))
                 mu[n+2*j:n+2*j+2] = sigma_j @ (xi[jrange] - omega[jrange, :][:, tau] @ mu[tau])
         elif method == 2:
-            omega = sparse.csr_matrix(omega)
-            sigma_m = inv(omega[n:, n:])
-            mu[n:] = sigma_m @ (xi[n:] + omega[n:, :n] @ xi_til)
+            mu = np.zeros_like(xi)
+            omega_csc = sparse.csc_matrix(omega)
+            omega_til_csc = sparse.csc_matrix(omega_til)
+            sigma = inv_sparse(omega_til_csc)
+            mu[:n] = sigma @ xi_til
+            sigma_m = inv_sparse(omega_csc[n:,n:])
+            mu[n:] = sigma_m @ (xi[n:] - omega_csc[n:,:n].dot(mu[:n]))
 
         t2 = time()
         self.time_solve = t2 - t1
@@ -237,11 +262,6 @@ class GraphSLAM:
         return mu, sigma
 
     def _visualize(self, mu, loop):
-        """
-
-        :param x: 2d array which represents predicted track
-        :return:
-        """
 
         colorlist = ["b", "m", "g"]
         x = [mu[i*3] for i in range(len(mu)//3)]
@@ -256,8 +276,11 @@ class GraphSLAM:
         print("solve     : {:.6f} [s]".format(self.time_solve))
         print("\n")
 
-    # 運動学動作モデル g
     def _func_g(self, u, x_prev):
+        """
+        Kinematics model : g
+        """
+
         x = np.zeros(3, dtype=np.float)
         x[:2] = x_prev[:2] + self._rotation_matrix(x_prev[2]) @ u[:2]
         x[2] = x_prev[2] + u[2]
@@ -265,8 +288,10 @@ class GraphSLAM:
 
         return x
 
-    # 関数gのxに対するヤコビ行列
     def _jacobi_g(self, u, x):
+        """
+        Jacobian matrix of g.
+        """
 
         G = np.eye(3, dtype=np.float)
         P = np.array([[-np.sin(x[2]), -np.cos(x[2])],
@@ -275,16 +300,22 @@ class GraphSLAM:
 
         return G
 
-    # 計測関数 h
     def _func_h(self, x, m):
+        """
+        Measurement model : h.
+        """
+
         Rot = self._rotation_matrix(-x[2])
 
         z = Rot @ (m[:2] - x[:2])
 
         return z
 
-    # 関数hの[x_t, m_j]におけるヤコビ行列
     def _jacobi_h(self, x, m):
+        """
+        Jacobian matrix of h.
+        """
+
         h = np.zeros((2,5))
         Rot = self._rotation_matrix(-x[2])
         P = np.array([[-np.sin(x[2]),  np.cos(x[2])],
